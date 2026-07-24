@@ -2,9 +2,7 @@
 cas-venv/
 
 # Входные файлы (конфиденциальные)
-input/billing/*
-input/bs/*
-input/reference/*
+input/*
 
 # Выходные данные
 output/tables/*
