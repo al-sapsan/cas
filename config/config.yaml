@@ -1,0 +1,38 @@
+paths:
+  input_bs: "input/bs"
+  input_billing: "input/billing"
+  output_manifests: "output/manifests"
+  output_tables: "output/tables"
+  output_maps: "output/maps"
+  output_reports: "output/reports"
+  output_logs: "output/logs"
+
+analysis:
+  date_format: "%d.%m.%Y %H:%M:%S"
+  date_errors: "raise"
+  default_timezone: "Europe/Moscow"
+  normalize_timezone: true
+  
+  target_dates:
+    - date: "2020-02-10"
+      time_from: "12:00"
+      time_to: "13:00"
+    - date: "2020-04-24"
+      time_from: "16:30"
+      time_to: "17:30"
+    - date: "2020-04-27"
+      time_from: "17:25"
+      time_to: "18:20"
+    - date: "2020-04-27"
+      time_from: "18:40"
+      time_to: "19:06"
+
+clustering:
+  eps_km: 0.5
+  min_samples: 3
+
+anomaly:
+  max_speed_kmh: 300
+  night_hours: [0, 1, 2, 3, 4, 5]
+
+xlsb_engine: "calamine"

@@ -1,0 +1,21 @@
+# Виртуальное окружение
+cas-venv/
+
+# Входные файлы (конфиденциальные)
+input/billing/*
+input/bs/*
+input/reference/*
+
+# Выходные данные
+output/tables/*
+output/maps/*
+output/reports/*
+output/manifests/*
+output/logs/*
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
