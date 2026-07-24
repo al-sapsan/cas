@@ -1,4 +1,4 @@
-# CAS — Cellular Analysis System v3.0
+# CAS — Cellular Analysis System v3.1
 
 **Полная инструкция по нормализации, поиску, фильтрации и сохранению данных**
 **Дата:** 2026-07-25
@@ -10,7 +10,7 @@
 ```
 ~/cas/
 ├── input/
-│   ├── billing/              # Исходные файлы МТС (НЕ трогать)
+│   ├── billing/              # Исходные файлы МТС (НЕ трогать — для верификации)
 │   ├── bs/                   # Справочники базовых станций
 │   └── normalized/           # Нормализованные файлы (единый шаблон)
 ├── output/
@@ -20,13 +20,14 @@
 │   ├── reports/              # PDF-отчёты
 │   └── logs/                 # Журналы операций с row-count
 ├── config/
-│   ├── config.yaml           # Даты, время, формат
+│   ├── config.yaml           # Даты, время, формат, временная зона
 │   └── column_aliases.yaml   # Словарь синонимов столбцов
 ├── scripts/
 │   ├── normalize.py          # Нормализация исходных файлов
+│   ├── verify.py             # Верификация: оригинал ↔ норма ↔ extracted
 │   ├── 01_import.py          # Импорт + SHA-256
 │   ├── 02_validate.py        # Валидация + нормализация типов
-│   ├── 03_extract_dates.py   # Фильтр по датам и времени
+│   ├── 03_extract_dates.py   # Фильтр по датам и времени (2 формата)
 │   ├── 04_merge_bs.py        # Сопоставление с БС по адресу
 │   ├── ai_formats.py         # Экспорт в AI-форматы
 │   ├── search_multi.py       # Массовый поиск
@@ -39,10 +40,10 @@
 ### Поток данных
 
 ```
-input/billing/*.xlsb, *.xlsx    (исходные файлы)
+input/billing/*.xlsb, *.xlsx    (исходные файлы — НЕ трогать)
         │
         ▼
-scripts/normalize.py            (единый шаблон)
+scripts/normalize.py            (единый шаблон + row-count контроль)
         │
         ▼
 input/normalized/*_normalized.xlsx
@@ -54,6 +55,7 @@ input/normalized/*_normalized.xlsx
 output/tables/billing_extracted.parquet
         │
         ▼
+scripts/verify.py               (верификация: оригинал ↔ extracted)
 scripts/search_*.py             (поиск по параметрам)
         │
         ▼
@@ -86,16 +88,16 @@ output/tables/экспертиза_*.xlsx
 ```bash
 cd ~/cas
 source cas-venv/bin/activate
-python scripts/normalize.py
+make normalize
 ```
 
 ### 3.2 Что делает
 
-1. Читает все файлы из `input/billing/`
+1. Читает все файлы из `input/billing/` (исходные файлы остаются нетронутыми)
 2. Приводит столбцы к единому шаблону
 3. Извлекает LAC/CI из форматов: `12322/116175413` и `12362-115902250`
-4. Показывает процент заполнения каждого столбца
-5. Проверяет, что количество строк совпадает
+4. Показывает процент заполнения каждого столбца (визуальная шкала)
+5. Проверяет, что количество строк совпадает с оригиналом
 6. Сохраняет в `input/normalized/`
 
 ### 3.3 Пример вывода
@@ -108,14 +110,31 @@ python scripts/normalize.py
   ✅ Дата и время         100.0% ████████████████████
   ✅ Номер абонента       100.0% ████████████████████
   ✅ Адрес БС              86.4% █████████████████░░░
-  ...
 ```
 
 ---
 
-## 4. Настройка дат и времени поиска
+## 4. Верификация данных
 
-### 4.1 Редактирование `config/config.yaml`
+### 4.1 Запуск
+
+```bash
+make verify
+```
+
+### 4.2 Что проверяет
+
+| Этап | Сравнение |
+|:----:|-----------|
+| **1** | Оригинал ↔ Нормализованный (row-count, номера, адреса) |
+| **2** | Нормализованный ↔ Extracted (какие данные сохранились) |
+| **3** | Оригинал ↔ Extracted (перекрёстная проверка) |
+
+---
+
+## 5. Настройка дат и времени поиска
+
+### 5.1 Редактирование `config/config.yaml`
 
 ```yaml
 analysis:
@@ -141,29 +160,31 @@ analysis:
       time_to: "19:06"
 ```
 
-### 4.2 Форматы дат
+### 5.2 Форматы дат
 
-| Пример в файле | date_format |
+| Пример в файле | Как парсится |
 |:--------------:|:-----------:|
 | `10.02.2020 12:00:00` | `%d.%m.%Y %H:%M:%S` |
 | `2020-04-27 17:25:00` | `ISO8601` |
 
-Скрипт `03_extract_dates.py` парсит оба формата автоматически.
+Скрипт `03_extract_dates.py` парсит оба формата автоматически из одного столбца «Дата и время».
 
 ---
 
-## 5. Запуск обработки
+## 6. Запуск обработки
 
 ```bash
-make all            # Полный цикл: import → validate → extract → merge
+make all            # Полный цикл: normalize → import → validate → extract → merge
+make normalize      # Только нормализация
 make import         # Только импорт
 make validate       # Только валидация
 make extract        # Только фильтрация
 make merge          # Только сопоставление
+make verify         # Верификация данных
 make clean          # Очистить результаты
 ```
 
-### 5.1 Просмотр логов
+### 6.1 Просмотр логов
 
 ```bash
 cat output/logs/01_import.log    # SHA-256, row-count
@@ -173,11 +194,11 @@ cat output/logs/04_merge.log     # Сопоставление, балансир�
 
 ---
 
-## 6. Поиск данных
+## 7. Поиск данных
 
 Все скрипты поиска работают с нормализованными столбцами. **Имена столбцов после нормализации:** `Дата и время`, `Номер абонента`, `Номер контакта`, `Адрес БС`.
 
-### 6.1 Поиск по номеру телефона
+### 7.1 Поиск по номеру телефона
 
 ```bash
 python << 'EOF'
@@ -191,18 +212,20 @@ for col in df.columns:
 
 target = "79184610186"  # ← ЗАМЕНИ
 
-for col in ["Номер абонента", "Номер контакта"]:
-    if col in df.columns:
-        mask = df[col].astype(str).str.contains(target, na=False)
-        result = df[mask]
-        if len(result) > 0:
-            safe = target.replace(" ", "_")
-            result.to_excel(f"output/tables/поиск_по_номеру_{safe}.xlsx", index=False)
-            print(f"✅ {col}: {len(result)} записей")
+# Искать во ВСЕХ столбцах
+mask = pd.Series(False, index=df.index)
+for col in df.columns:
+    if df[col].dtype in ('object', 'str'):
+        mask |= df[col].astype(str).str.contains(target, na=False)
+
+result = df[mask]
+safe = target.replace(" ", "_")
+result.to_excel(f"output/tables/поиск_по_номеру_{safe}.xlsx", index=False)
+print(f"✅ {len(result)} записей")
 EOF
 ```
 
-### 6.2 Поиск по адресу БС
+### 7.2 Поиск по адресу БС
 
 ```bash
 python << 'EOF'
@@ -224,7 +247,7 @@ print(f"✅ {len(result)} записей")
 EOF
 ```
 
-### 6.3 Поиск по дате и времени
+### 7.3 Поиск по дате и времени
 
 ```bash
 python << 'EOF'
@@ -239,6 +262,7 @@ target_date = "24.04.2020"  # ← ЗАМЕНИ
 time_from = "14:50"
 time_to = "15:51"
 
+# Два формата дат
 df["_dt"] = pd.NaT
 df["_dt"] = pd.to_datetime(df["Дата и время"], format="%d.%m.%Y %H:%M:%S", errors="coerce")
 df["_dt"] = df["_dt"].fillna(pd.to_datetime(df["Дата и время"], format="ISO8601", errors="coerce"))
@@ -256,7 +280,7 @@ print(f"✅ {len(result)} записей")
 EOF
 ```
 
-### 6.4 Поиск по LAC + CI
+### 7.4 Поиск по LAC + CI
 
 ```bash
 python << 'EOF'
@@ -279,7 +303,42 @@ print(f"✅ {len(result)} записей")
 EOF
 ```
 
-### 6.5 Массовый поиск (все запросы в одном скрипте)
+### 7.5 Поиск по номеру + дате + адресу (полный критерий)
+
+```bash
+python << 'EOF'
+import pandas as pd
+df = pd.read_parquet('output/tables/billing_extracted.parquet')
+
+for col in df.columns:
+    if 'arrow' in str(df[col].dtype):
+        df[col] = df[col].astype(str)
+
+phone = "79184610186"       # ← ЗАМЕНИ
+target_date = "24.04.2020"   # ← ЗАМЕНИ
+target_addr = "Красноармейск" # ← ЗАМЕНИ
+
+df["_dt"] = pd.NaT
+df["_dt"] = pd.to_datetime(df["Дата и время"], format="%d.%m.%Y %H:%M:%S", errors="coerce")
+df["_dt"] = df["_dt"].fillna(pd.to_datetime(df["Дата и время"], format="ISO8601", errors="coerce"))
+
+target_dt = pd.to_datetime(target_date, format="%d.%m.%Y")
+
+phone_mask = pd.Series(False, index=df.index)
+for col in df.columns:
+    if df[col].dtype in ('object', 'str'):
+        phone_mask |= df[col].astype(str).str.contains(phone, na=False)
+
+date_mask = df["_dt"].dt.date == target_dt.date()
+addr_mask = df["Адрес БС"].astype(str).str.contains(target_addr, na=False)
+
+result = df[phone_mask & date_mask & addr_mask]
+result.to_excel(f"output/tables/экспертиза_{phone}_{target_date}.xlsx", index=False)
+print(f"✅ {len(result)} записей")
+EOF
+```
+
+### 7.6 Массовый поиск (все запросы в одном скрипте)
 
 ```bash
 python scripts/search_multi.py
@@ -297,7 +356,7 @@ searches = [
 
 ---
 
-## 7. Форматы сохранения
+## 8. Форматы сохранения
 
 | Формат | Расширение | Для чего |
 |--------|:----------:|----------|
@@ -311,7 +370,7 @@ searches = [
 
 ---
 
-## 8. Ключевые особенности после нормализации
+## 9. Ключевые особенности v3.0
 
 | Особенность | Решение |
 |-------------|---------|
@@ -320,10 +379,13 @@ searches = [
 | **Номера в разных столбцах** | Поиск идёт по всем: `Номер абонента`, `Номер контакта` |
 | **LAC/CI в формате 12362-115902250** | `normalize.py` разбивает по дефису |
 | **Адрес в одном столбце** | `Адрес БС` — единое имя после нормализации |
+| **Верификация на каждом этапе** | `verify.py` сравнивает оригинал ↔ норма ↔ extracted |
+| **Parquet вместо Pickle** | Безопасность, строгая типизация, кроссплатформенность |
+| **Исходные файлы нетронуты** | `input/billing/` — только для чтения и верификации |
 
 ---
 
-## 9. Типичные проблемы
+## 10. Типичные проблемы
 
 | Проблема | Решение |
 |----------|---------|
@@ -331,10 +393,12 @@ searches = [
 | `❌ Номер не найден` | Проверить `print(df['Номер абонента'].unique()[:10])` |
 | `ArrowString` | Добавить `df[col] = df[col].astype(str)` |
 | `0 записей за дату` | Проверить `cat output/logs/03_extract.log` |
+| Расхождение оригинал ↔ extracted | Запустить `make verify` для диагностики |
+| Нормализация пропускает данные | Проверить `input/normalized/` — все ли файлы созданы |
 
 ---
 
-## 10. Завершение работы
+## 11. Завершение работы
 
 ```bash
 deactivate
@@ -342,5 +406,4 @@ deactivate
 
 ---
 
-> **Инструкция завершена.** CAS v3.0 — полный цикл от нормализации до экспертного поиска.
-
+> **Инструкция завершена.** CAS v3.1 — полный цикл от нормализации до экспертного поиска с верификацией на каждом этапе.
