@@ -8,7 +8,7 @@ for col in df.columns:
         df[col] = df[col].astype(str)
 
 TARGET_DATE = "24.04.2020"
-TIME_FROM = "14:50:00"
+TIME_FROM = "16:30:00"
 TIME_TO = "17:30:00"
 TARGET_PHONES = ["79181115519", "79184610186"]
 TARGET_ADDRESS = "Красноармейск"
