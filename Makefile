@@ -1,6 +1,9 @@
-.PHONY: all import validate extract merge test clean
+.PHONY: all normalize import validate extract merge test clean
 
 all: import validate extract merge
+
+normalize:
+	python scripts/normalize.py
 
 import:
 	python scripts/01_import.py
