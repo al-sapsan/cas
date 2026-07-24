@@ -1,8 +1,7 @@
 """
 03_extract_dates.py — Фильтрация по датам и времени
-Парсит каждый столбец в своём формате
+Парсит столбец 'Дата и время' в двух форматах
 """
-
 import logging
 import yaml
 from pathlib import Path
@@ -29,33 +28,29 @@ log = logging.getLogger(__name__)
 
 def extract_dates(df, target_dates, timezone):
     log.info("=== Извлечение по датам и времени ===")
-    log.info("Часовой пояс: %s", timezone)
     
     input_rows = len(df)
+    date_col = "Дата и время"
     
-    # Объединить даты из всех столбцов, парся каждый в своём формате
-    df["_date_combined"] = pd.NaT
-    
-    # Столбец 1: ДД.ММ.ГГГГ ЧЧ:ММ:СС
-    if "Время начала соединения" in df.columns:
-        parsed = pd.to_datetime(df["Время начала соединения"], format="%d.%m.%Y %H:%M:%S", errors="coerce")
-        df["_date_combined"] = df["_date_combined"].fillna(parsed)
-        log.info("Время начала соединения: распознано %d", parsed.notna().sum())
-    
-    # Столбец 2: ISO (YYYY-MM-DD HH:MM:SS)
-    if "Дата и время" in df.columns:
-        parsed = pd.to_datetime(df["Дата и время"], format="ISO8601", errors="coerce")
-        df["_date_combined"] = df["_date_combined"].fillna(parsed)
-        log.info("Дата и время: распознано %d", parsed.notna().sum())
-    
-    valid = df["_date_combined"].notna().sum()
-    log.info("Всего распознано дат: %d / %d", valid, input_rows)
-    
-    if valid == 0:
-        log.error("Не удалось распознать ни одной даты")
+    if date_col not in df.columns:
+        log.error("Столбец '%s' не найден", date_col)
         return None
     
-    # Фильтрация
+    # Парсить в ДВУХ форматах
+    parsed_1 = pd.to_datetime(df[date_col], format="%d.%m.%Y %H:%M:%S", errors="coerce")
+    parsed_2 = pd.to_datetime(df[date_col], format="ISO8601", errors="coerce")
+    
+    df["_dt"] = parsed_1.fillna(parsed_2)
+    
+    valid = df["_dt"].notna().sum()
+    log.info("Распознано дат: %d / %d (fmt1: %d, fmt2: %d)", 
+             valid, input_rows, parsed_1.notna().sum(), parsed_2.notna().sum())
+    
+    if valid == 0:
+        log.error("Не удалось распознать даты")
+        log.error("Примеры: %s", df[date_col].dropna().head(5).tolist())
+        return None
+    
     results = []
     for entry in target_dates:
         target_date = entry["date"]
@@ -65,7 +60,7 @@ def extract_dates(df, target_dates, timezone):
         log.info("Обработка: %s (%s — %s)", target_date, time_from, time_to)
         
         target_dt = pd.to_datetime(target_date, format="%Y-%m-%d")
-        date_mask = df["_date_combined"].dt.date == target_dt.date()
+        date_mask = df["_dt"].dt.date == target_dt.date()
         subset = df[date_mask].copy()
         
         if len(subset) == 0:
@@ -74,7 +69,7 @@ def extract_dates(df, target_dates, timezone):
         
         t_from = pd.to_datetime(time_from, format="%H:%M").time()
         t_to = pd.to_datetime(time_to, format="%H:%M").time()
-        subset_time = subset["_date_combined"].dt.time
+        subset_time = subset["_dt"].dt.time
         
         if t_from <= t_to:
             time_mask = (subset_time >= t_from) & (subset_time <= t_to)
@@ -86,11 +81,11 @@ def extract_dates(df, target_dates, timezone):
         results.append(subset)
     
     if not results:
-        log.warning("⚠️ Не найдено записей за указанные периоды!")
+        log.warning("⚠️ Не найдено записей")
         return None
     
     result = pd.concat(results, ignore_index=True)
-    result = result.drop(columns=["_date_combined"])
+    result = result.drop(columns=["_dt"])
     
     log.info("ROW-COUNT: %d → %d", input_rows, len(result))
     return result

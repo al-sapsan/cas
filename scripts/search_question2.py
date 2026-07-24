@@ -58,7 +58,7 @@ for phone in TARGET_PHONES:
     print(f"  За {TARGET_DATE}: {len(date_df)}")
     
     # Фильтр по адресу БС
-    addr_mask = date_df["Адрес БС абонента на начало"].astype(str).str.lower().str.contains(TARGET_ADDRESS.lower(), na=False)
+    addr_mask = date_df["Адрес БС"].astype(str).str.lower().str.contains(TARGET_ADDRESS.lower(), na=False)
     addr_df = date_df[addr_mask].copy()
     print(f"  С адресом БС '{TARGET_ADDRESS}': {len(addr_df)}")
     

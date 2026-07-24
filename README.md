@@ -1,231 +1,252 @@
-# CAS — Cellular Analysis System
+# Cellular Analysis System (CAS) — Развёртывание на lab-term
 
-**Полная инструкция по поиску, фильтрации и сохранению данных**
-**Версия:** 2.0 | **Дата:** 2026-07-24
+**Версия:** 1.0
+**Дата:** 2026-07-19
+**Статус:** К исполнению
+# CAS — Cellular Analysis System v3.0
+
+**Полная инструкция по нормализации, поиску, фильтрации и сохранению данных**
+**Дата:** 2026-07-25
 
 ---
 
-## 1. Структура проекта
+## 1. Архитектура проекта
 
 ```
 ~/cas/
 ├── input/
-│   ├── billing/              # Детализации МТС (.xlsb, .xlsx)
-│   └── bs/                   # Справочники базовых станций (.xlsx)
+│   ├── billing/              # Исходные файлы МТС (НЕ трогать)
+│   ├── bs/                   # Справочники базовых станций
+│   └── normalized/           # Нормализованные файлы (единый шаблон)
 ├── output/
 │   ├── manifests/            # SHA-256 контрольные суммы
 │   ├── tables/               # Результаты (Excel, TSV, JSON, TXT, Parquet)
-│   ├── maps/                 # Интерактивные карты (HTML)
+│   ├── maps/                 # Интерактивные карты
 │   ├── reports/              # PDF-отчёты
 │   └── logs/                 # Журналы операций с row-count
 ├── config/
-│   ├── config.yaml           # Даты, время, формат, временная зона
+│   ├── config.yaml           # Даты, время, формат
 │   └── column_aliases.yaml   # Словарь синонимов столбцов
 ├── scripts/
-│   ├── 01_import.py          # Загрузка + SHA-256 + все листы
-│   ├── 02_validate.py        # Нормализация + Hex→Dec
+│   ├── normalize.py          # Нормализация исходных файлов
+│   ├── 01_import.py          # Импорт + SHA-256
+│   ├── 02_validate.py        # Валидация + нормализация типов
 │   ├── 03_extract_dates.py   # Фильтр по датам и времени
 │   ├── 04_merge_bs.py        # Сопоставление с БС по адресу
 │   ├── ai_formats.py         # Экспорт в AI-форматы
-│   └── search_multi.py       # Массовый поиск и сохранение
+│   ├── search_multi.py       # Массовый поиск
+│   ├── search_question2.py   # Поиск по 10.02.2020
+│   └── search_question3.py   # Поиск по 24.04.2020
 ├── cas-venv/                 # Виртуальное окружение
 └── Makefile
 ```
 
+### Поток данных
+
+```
+input/billing/*.xlsb, *.xlsx    (исходные файлы)
+        │
+        ▼
+scripts/normalize.py            (единый шаблон)
+        │
+        ▼
+input/normalized/*_normalized.xlsx
+        │
+        ▼
+01_import.py → 02_validate.py → 03_extract_dates.py → 04_merge_bs.py
+        │
+        ▼
+output/tables/billing_extracted.parquet
+        │
+        ▼
+scripts/search_*.py             (поиск по параметрам)
+        │
+        ▼
+output/tables/экспертиза_*.xlsx
+```
+
 ---
 
-## 2. Подготовка файлов
+## 2. Единый шаблон столбцов (после нормализации)
 
-### 2.1 Принимаемые форматы
+| Столбец | Содержание | Пример |
+|---------|------------|--------|
+| **Дата и время** | Момент соединения | `10.02.2020 12:14:42` или `2020-04-24 14:50:52` |
+| **Номер абонента** | Исследуемый номер | `79184610186` |
+| **Номер контакта** | С кем связывался | `79883881180` или `internet.mts.ru` |
+| **Тип соединения** | GPRS, Вызов, SMS | `GPRS` |
+| **Длительность (сек)** | Продолжительность | `48` |
+| **IMEI** | Идентификатор устройства | `35722309618673` |
+| **LAC** | Location Area Code | `10162` |
+| **CI** | Cell Identity | `58566` |
+| **Адрес БС** | Адрес базовой станции | `г. Краснодар, ул. Красноармейская, напротив дома №14` |
+| **Азимут** | Направление антенны | `120` |
 
-| Тип | Расширения | Куда класть |
-|-----|:---------:|-------------|
-| Детализации | `.xlsb`, `.xlsx` | `input/billing/` |
-| Справочники БС | `.xlsx` | `input/bs/` |
+---
 
-### 2.2 Предварительный осмотр файла
+## 3. Нормализация исходных файлов
+
+### 3.1 Запуск
 
 ```bash
 cd ~/cas
 source cas-venv/bin/activate
-
-python << 'EOF'
-import pandas as pd
-fp = "input/billing/твой_файл.xlsb"
-engine = "pyxlsb" if fp.endswith(".xlsb") else "openpyxl"
-excel = pd.ExcelFile(fp, engine=engine)
-print("Листы:", excel.sheet_names)
-for sh in excel.sheet_names:
-    df = pd.read_excel(excel, sheet_name=sh)
-    print(f"\nЛист: {sh}")
-    print(f"  Строк: {len(df)} | Столбцов: {len(df.columns)}")
-    print(f"  Столбцы: {df.columns.tolist()}")
-    print(f"  Примеры (первые 2):")
-    print(df.head(2).to_string())
-EOF
+python scripts/normalize.py
 ```
 
-### 2.3 Проверка формата дат
+### 3.2 Что делает
 
-```bash
-python << 'EOF'
-import pandas as pd
-df = pd.read_parquet('output/tables/billing_raw.parquet')
-for c in df.columns:
-    if 'дат' in c.lower() or 'врем' in c.lower():
-        print(f"\n{c}:")
-        print(df[c].dropna().head(3).tolist())
-EOF
+1. Читает все файлы из `input/billing/`
+2. Приводит столбцы к единому шаблону
+3. Извлекает LAC/CI из форматов: `12322/116175413` и `12362-115902250`
+4. Показывает процент заполнения каждого столбца
+5. Проверяет, что количество строк совпадает
+6. Сохраняет в `input/normalized/`
+
+### 3.3 Пример вывода
+
 ```
-
-### 2.4 Очистка проблемных файлов
-
-- Удалить объединённые ячейки, скрытые столбцы, формулы
-- Конвертировать `.xlsb` → `.xlsx`: открыть в Excel → «Сохранить как» → Excel Workbook
+📄 файл.xlsb
+  Строк: 15470 → 15470
+  ✅ ROW-COUNT: совпадает (15470)
+  Заполнение (% от 15470):
+  ✅ Дата и время         100.0% ████████████████████
+  ✅ Номер абонента       100.0% ████████████████████
+  ✅ Адрес БС              86.4% █████████████████░░░
+  ...
+```
 
 ---
 
-## 3. Настройка поиска
+## 4. Настройка дат и времени поиска
 
-### 3.1 Даты и время (`config/config.yaml`)
+### 4.1 Редактирование `config/config.yaml`
 
 ```yaml
 analysis:
-  date_format: "%d.%m.%Y %H:%M:%S"   # Формат дат в детализациях
-  date_errors: "raise"                # raise = строгий | coerce = пропускать ошибки
+  date_format: "%d.%m.%Y %H:%M:%S"
+  date_errors: "raise"
   default_timezone: "Europe/Moscow"
   
   target_dates:
     - date: "2020-02-10"
       time_from: "12:00"
       time_to: "13:00"
+    - date: "2020-04-24"
+      time_from: "14:50"
+      time_to: "15:51"
+    - date: "2020-04-24"
+      time_from: "16:30"
+      time_to: "17:30"
     - date: "2020-04-27"
       time_from: "17:25"
+      time_to: "18:20"
+    - date: "2020-04-27"
+      time_from: "18:40"
       time_to: "19:06"
 ```
 
-**Соответствие формата дат:**
+### 4.2 Форматы дат
 
-| Пример в файле | `date_format` |
-|:--------------:|:-------------:|
-| `10.02.2020 12:00:00` | `"%d.%m.%Y %H:%M:%S"` |
-| `2020-04-27 17:25:00` | `"ISO8601"` |
-| `02/10/2020 12:00` | `"%m/%d/%Y %H:%M"` |
+| Пример в файле | date_format |
+|:--------------:|:-----------:|
+| `10.02.2020 12:00:00` | `%d.%m.%Y %H:%M:%S` |
+| `2020-04-27 17:25:00` | `ISO8601` |
 
-### 3.2 Словарь столбцов (`config/column_aliases.yaml`)
-
-Если скрипт пишет `WARNING: Не найдены столбцы: {'lac', 'ci'}` — добавить названия в словарь:
-
-```yaml
-lac:
-  - "LAC"
-  - "LAC идентификатор"   # ← добавить сюда новое название из файла
-ci:
-  - "CI"
-  - "Идентификатор ячейки" # ← добавить сюда
-```
+Скрипт `03_extract_dates.py` парсит оба формата автоматически.
 
 ---
 
-## 4. Запуск обработки
+## 5. Запуск обработки
 
 ```bash
-cd ~/cas
-source cas-venv/bin/activate
-
-make all            # Полный цикл
-make import         # Только загрузка
-make validate       # Только нормализация
+make all            # Полный цикл: import → validate → extract → merge
+make import         # Только импорт
+make validate       # Только валидация
 make extract        # Только фильтрация
 make merge          # Только сопоставление
 make clean          # Очистить результаты
 ```
 
-### 4.1 Просмотр логов
+### 5.1 Просмотр логов
 
 ```bash
-cat output/logs/01_import.log    # Какие файлы, SHA-256, сколько строк
+cat output/logs/01_import.log    # SHA-256, row-count
 cat output/logs/03_extract.log   # Какие даты найдены
-cat output/logs/04_merge.log     # Сколько сопоставлено, балансировка
+cat output/logs/04_merge.log     # Сопоставление, балансировка
 ```
 
 ---
 
-## 5. Поиск данных
+## 6. Поиск данных
 
-Все команды выполняются после `make all` в активном окружении.
+Все скрипты поиска работают с нормализованными столбцами. **Имена столбцов после нормализации:** `Дата и время`, `Номер абонента`, `Номер контакта`, `Адрес БС`.
 
-### 5.1 Поиск по номеру телефона
+### 6.1 Поиск по номеру телефона
 
 ```bash
 python << 'EOF'
 import pandas as pd
 df = pd.read_parquet('output/tables/billing_extracted.parquet')
-target = "79181115519"  # ← ЗАМЕНИ
 
-for col in ["Номер абонента", "Номер А"]:
+# Принудительно преобразовать ArrowString
+for col in df.columns:
+    if 'arrow' in str(df[col].dtype):
+        df[col] = df[col].astype(str)
+
+target = "79184610186"  # ← ЗАМЕНИ
+
+for col in ["Номер абонента", "Номер контакта"]:
     if col in df.columns:
         mask = df[col].astype(str).str.contains(target, na=False)
         result = df[mask]
         if len(result) > 0:
-            result.to_excel(f"output/tables/поиск_по_номеру_{target}.xlsx", index=False)
-            result.to_csv(f"output/tables/поиск_по_номеру_{target}.tsv", sep="\t", index=False, encoding="utf-8")
-            print(f"✅ {col}: {len(result)} записей → output/tables/поиск_по_номеру_{target}.xlsx")
+            safe = target.replace(" ", "_")
+            result.to_excel(f"output/tables/поиск_по_номеру_{safe}.xlsx", index=False)
+            print(f"✅ {col}: {len(result)} записей")
 EOF
 ```
 
-**Варианты поиска по номеру:**
-
-| Что ищем | Код |
-|----------|-----|
-| Точный номер | `df[col] == "79181115519"` |
-| Содержит часть номера | `.str.contains("115519")` |
-| Начинается с | `.str.startswith("7918")` |
-| Несколько номеров | `.str.contains("79181115519\|79181115520")` |
-
-### 5.2 Поиск по адресу БС
+### 6.2 Поиск по адресу БС
 
 ```bash
 python << 'EOF'
 import pandas as pd
 df = pd.read_parquet('output/tables/billing_extracted.parquet')
-target = "ул. Митрофана Седина"  # ← ЗАМЕНИ
 
-safe = target.replace(" ", "_").replace(",", "").replace(".", "")[:50]
-mask = df["Адрес БС абонента на начало"].astype(str).str.lower().str.contains(target.lower(), na=False)
+for col in df.columns:
+    if 'arrow' in str(df[col].dtype):
+        df[col] = df[col].astype(str)
+
+target = "Красноармейск"  # ← ЗАМЕНИ (часть адреса)
+
+mask = df["Адрес БС"].astype(str).str.contains(target, na=False)
 result = df[mask]
 
+safe = target.replace(" ", "_")[:50]
 result.to_excel(f"output/tables/поиск_по_адресу_{safe}.xlsx", index=False)
-result.to_csv(f"output/tables/поиск_по_адресу_{safe}.tsv", sep="\t", index=False, encoding="utf-8")
-print(f"✅ {len(result)} записей → output/tables/поиск_по_адресу_{safe}.xlsx")
+print(f"✅ {len(result)} записей")
 EOF
 ```
 
-**Варианты поиска по адресу:**
-
-| Что ищем | Код |
-|----------|-----|
-| Точное совпадение | `df["Адрес БС абонента на начало"] == "Россия, ..."` |
-| Содержит слово | `.str.contains("Красная", na=False)` |
-| Начинается с | `.str.startswith("Россия")` |
-| Несколько адресов | `.str.contains("Красная\|Седина")` |
-
-### 5.3 Поиск по дате и времени
+### 6.3 Поиск по дате и времени
 
 ```bash
 python << 'EOF'
 import pandas as pd
 df = pd.read_parquet('output/tables/billing_extracted.parquet')
 
-target_date = "10.02.2020"  # ← ЗАМЕНИ
-time_from = "12:00"          # ← ЗАМЕНИ
-time_to = "13:00"            # ← ЗАМЕНИ
+for col in df.columns:
+    if 'arrow' in str(df[col].dtype):
+        df[col] = df[col].astype(str)
+
+target_date = "24.04.2020"  # ← ЗАМЕНИ
+time_from = "14:50"
+time_to = "15:51"
 
 df["_dt"] = pd.NaT
-if "Время начала соединения" in df.columns:
-    df["_dt"] = df["_dt"].fillna(pd.to_datetime(df["Время начала соединения"], format="%d.%m.%Y %H:%M:%S", errors="coerce"))
-if "Дата и время" in df.columns:
-    df["_dt"] = df["_dt"].fillna(pd.to_datetime(df["Дата и время"], format="ISO8601", errors="coerce"))
+df["_dt"] = pd.to_datetime(df["Дата и время"], format="%d.%m.%Y %H:%M:%S", errors="coerce")
+df["_dt"] = df["_dt"].fillna(pd.to_datetime(df["Дата и время"], format="ISO8601", errors="coerce"))
 
 target_dt = pd.to_datetime(target_date, format="%d.%m.%Y")
 t_from = pd.to_datetime(time_from, format="%H:%M").time()
@@ -236,142 +257,47 @@ result = subset[(subset["_dt"].dt.time >= t_from) & (subset["_dt"].dt.time <= t_
 
 safe = f"{target_date}_{time_from.replace(':','')}_{time_to.replace(':','')}"
 result.to_excel(f"output/tables/поиск_по_дате_{safe}.xlsx", index=False)
-print(f"✅ {len(result)} записей → output/tables/поиск_по_дате_{safe}.xlsx")
+print(f"✅ {len(result)} записей")
 EOF
 ```
 
-### 5.4 Поиск по LAC
+### 6.4 Поиск по LAC + CI
 
 ```bash
 python << 'EOF'
 import pandas as pd
 df = pd.read_parquet('output/tables/billing_extracted.parquet')
-target_lac = 12322  # ← ЗАМЕНИ
 
-mp_col = None
-for c in df.columns:
-    if "М/П" in c or "м/п" in c:
-        mp_col = c
-        break
+for col in df.columns:
+    if 'arrow' in str(df[col].dtype):
+        df[col] = df[col].astype(str)
 
-if mp_col:
-    parts = df[mp_col].astype(str).str.split("/", expand=True)
-    if parts.shape[1] == 4:
-        df["_lac"] = pd.to_numeric(parts[2], errors="coerce")
-    elif parts.shape[1] == 2:
-        df["_lac"] = pd.to_numeric(parts[1], errors="coerce")
+target_lac = 10162   # ← ЗАМЕНИ
+target_ci = 58566    # ← ЗАМЕНИ
 
-result = df[df["_lac"] == target_lac]
-result.to_excel(f"output/tables/поиск_по_LAC{target_lac}.xlsx", index=False)
-print(f"✅ LAC={target_lac}: {len(result)} записей")
-EOF
-```
+df["LAC"] = pd.to_numeric(df["LAC"], errors="coerce")
+df["CI"] = pd.to_numeric(df["CI"], errors="coerce")
 
-### 5.5 Поиск по LAC + CI
-
-```bash
-python << 'EOF'
-import pandas as pd
-df = pd.read_parquet('output/tables/billing_extracted.parquet')
-target_lac = 12322      # ← ЗАМЕНИ
-target_ci = 116175413   # ← ЗАМЕНИ
-
-mp_col = None
-for c in df.columns:
-    if "М/П" in c or "м/п" in c:
-        mp_col = c
-        break
-
-if mp_col:
-    parts = df[mp_col].astype(str).str.split("/", expand=True)
-    if parts.shape[1] == 4:
-        df["_lac"] = pd.to_numeric(parts[2], errors="coerce")
-        df["_ci"] = pd.to_numeric(parts[3], errors="coerce")
-    elif parts.shape[1] == 2:
-        df["_lac"] = pd.to_numeric(parts[0], errors="coerce")
-        df["_ci"] = pd.to_numeric(parts[1], errors="coerce")
-
-result = df[(df["_lac"] == target_lac) & (df["_ci"] == target_ci)]
+result = df[(df["LAC"] == target_lac) & (df["CI"] == target_ci)]
 result.to_excel(f"output/tables/поиск_по_LAC{target_lac}_CI{target_ci}.xlsx", index=False)
-print(f"✅ LAC={target_lac} CI={target_ci}: {len(result)} записей")
+print(f"✅ {len(result)} записей")
 EOF
 ```
 
----
-
-## 6. Массовый поиск (все запросы в одном скрипте)
-
-### 6.1 Создание скрипта
-
-```bash
-cat > scripts/search_multi.py << 'PYEOF'
-import pandas as pd
-
-df = pd.read_parquet('output/tables/billing_extracted.parquet')
-
-# Извлечь LAC/CI
-mp_col = None
-for c in df.columns:
-    if "М/П" in c or "м/п" in c:
-        mp_col = c
-        break
-if mp_col:
-    parts = df[mp_col].astype(str).str.split("/", expand=True)
-    if parts.shape[1] == 4:
-        df["_lac"] = pd.to_numeric(parts[2], errors="coerce")
-        df["_ci"] = pd.to_numeric(parts[3], errors="coerce")
-    elif parts.shape[1] == 2:
-        df["_lac"] = pd.to_numeric(parts[0], errors="coerce")
-        df["_ci"] = pd.to_numeric(parts[1], errors="coerce")
-
-# ========== ЗАДАНИЯ (редактируй здесь) ==========
-searches = [
-    {"name": "номер_79181115519", "type": "phone", "phone": "79181115519"},
-    {"name": "номер_79186633236", "type": "phone", "phone": "79186633236"},
-    {"name": "адрес_Седина", "type": "address", "address": "ул. Митрофана Седина"},
-    {"name": "адрес_Красная", "type": "address", "address": "ул. Красная"},
-    {"name": "LAC12322_CI116175413", "type": "lac_ci", "lac": 12322, "ci": 116175413},
-    {"name": "LAC12362_CI115353651", "type": "lac_ci", "lac": 12362, "ci": 115353651},
-]
-# ================================================
-
-for s in searches:
-    if s["type"] == "phone":
-        for col in ["Номер абонента", "Номер А"]:
-            if col in df.columns:
-                mask = df[col].astype(str).str.contains(s["phone"], na=False)
-                result = df[mask]
-                if len(result) > 0:
-                    break
-    elif s["type"] == "address":
-        mask = df["Адрес БС абонента на начало"].astype(str).str.lower().str.contains(s["address"].lower(), na=False)
-        result = df[mask]
-    elif s["type"] == "lac_ci":
-        result = df[(df["_lac"] == s["lac"]) & (df["_ci"] == s["ci"])]
-    
-    if len(result) > 0:
-        result.to_excel(f"output/tables/поиск_{s['name']}.xlsx", index=False)
-        result.to_csv(f"output/tables/поиск_{s['name']}.tsv", sep="\t", index=False, encoding="utf-8")
-        print(f"✅ {s['name']}: {len(result)} записей")
-    else:
-        print(f"⚠️ {s['name']}: 0 записей")
-PYEOF
-```
-
-### 6.2 Запуск
+### 6.5 Массовый поиск (все запросы в одном скрипте)
 
 ```bash
 python scripts/search_multi.py
 ```
 
-### 6.3 Как добавить свой запрос
-
-Добавить блок в секцию `searches`:
+Редактировать список запросов в `scripts/search_multi.py`:
 
 ```python
-{"name": "моё_название", "type": "phone", "phone": "79181115519"},     # поиск по номеру
-{"name": "моё_название", "type": "address", "address": "ул. Ленина"}, # поиск по адресу
-{"name": "моё_название", "type": "lac_ci", "lac": 12322, "ci": 456},  # поиск по LAC+CI
+searches = [
+    {"name": "номер_79184610186", "type": "phone", "phone": "79184610186"},
+    {"name": "адрес_Красноармейская", "type": "address", "address": "Красноармейск"},
+    {"name": "LAC10162_CI58566", "type": "lac_ci", "lac": 10162, "ci": 58566},
+]
 ```
 
 ---
@@ -380,30 +306,40 @@ python scripts/search_multi.py
 
 | Формат | Расширение | Для чего |
 |--------|:----------:|----------|
-| **Excel** | `.xlsx` | Для эксперта — просмотр, печать, приложение к заключению |
-| **TSV** | `.tsv` | Для AI-анализа — табуляция, устойчив к запятым в адресах |
-| **TXT** | `.txt` | Для промптов AI — выровненная таблица |
-| **JSON** | `.json` | Для API и программной обработки |
-| **Markdown** | `.md` | Для документирования |
-| **Parquet** | `.parquet` | Промежуточное хранение — быстрое, строго типизированное |
+| **Excel** | `.xlsx` | Эксперт — просмотр, печать, приложение к заключению |
+| **TSV** | `.tsv` | AI-анализ — табуляция, устойчив к запятым |
+| **TXT** | `.txt` | Промпты AI — выровненная таблица |
+| **JSON** | `.json` | API и программная обработка |
+| **Parquet** | `.parquet` | Промежуточное хранение — быстрое, типизированное |
 
 Все файлы сохраняются в `output/tables/`.
 
 ---
 
-## 8. Типичные проблемы
+## 8. Ключевые особенности после нормализации
 
-| Проблема | Причина | Решение |
-|----------|---------|---------|
-| `KeyError: 'lac'` | Столбцы названы иначе | Добавить в `column_aliases.yaml` |
-| `Нет записей за дату` | Формат даты не совпадает | Проверить `date_format` |
-| `calamine: листов не найдено` | Файл .xlsb не читается | Конвертировать в .xlsx через Excel |
-| `Сопоставлено: 0%` | Адреса не совпадают | Проверить написание адресов |
-| `ДИСБАЛАНС строк` | Потеря данных при merge | Прислать лог разработчику |
+| Особенность | Решение |
+|-------------|---------|
+| **Два формата дат** в одном столбце | `03_extract_dates.py` парсит `%d.%m.%Y` и `ISO8601` |
+| **ArrowString вместо str** | Скрипты принудительно преобразуют `df[col].astype(str)` |
+| **Номера в разных столбцах** | Поиск идёт по всем: `Номер абонента`, `Номер контакта` |
+| **LAC/CI в формате 12362-115902250** | `normalize.py` разбивает по дефису |
+| **Адрес в одном столбце** | `Адрес БС` — единое имя после нормализации |
 
 ---
 
-## 9. Завершение работы
+## 9. Типичные проблемы
+
+| Проблема | Решение |
+|----------|---------|
+| `KeyError: 'Адрес БС абонента на начало'` | Использовать `Адрес БС` (нормализованное имя) |
+| `❌ Номер не найден` | Проверить `print(df['Номер абонента'].unique()[:10])` |
+| `ArrowString` | Добавить `df[col] = df[col].astype(str)` |
+| `0 записей за дату` | Проверить `cat output/logs/03_extract.log` |
+
+---
+
+## 10. Завершение работы
 
 ```bash
 deactivate
@@ -411,4 +347,5 @@ deactivate
 
 ---
 
-> **Инструкция завершена.** CAS v2.0 — полный цикл от загрузки до сохранения результатов поиска.
+> **Инструкция завершена.** CAS v3.0 — полный цикл от нормализации до экспертного поиска.
+

@@ -14,7 +14,7 @@ with open("config/config.yaml") as f:
     config = yaml.safe_load(f)
 
 INPUT_BS = Path(config["paths"]["input_bs"])
-INPUT_BILLING = Path(config["paths"]["input_billing"])
+INPUT_BILLING = Path("input/normalized")
 OUTPUT_MANIFESTS = Path(config["paths"]["output_manifests"])
 OUTPUT_TABLES = Path(config["paths"]["output_tables"])
 OUTPUT_LOGS = Path(config["paths"]["output_logs"])

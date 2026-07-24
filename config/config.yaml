@@ -1,6 +1,6 @@
 paths:
   input_bs: "input/bs"
-  input_billing: "input/billing"
+  input_billing: "input/normalized"
   output_manifests: "output/manifests"
   output_tables: "output/tables"
   output_maps: "output/maps"
@@ -17,6 +17,9 @@ analysis:
     - date: "2020-02-10"
       time_from: "12:00"
       time_to: "13:00"
+    - date: "2020-04-24"
+      time_from: "14:50"
+      time_to: "15:51"
     - date: "2020-04-24"
       time_from: "16:30"
       time_to: "17:30"
